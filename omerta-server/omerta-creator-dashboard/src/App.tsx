@@ -18,7 +18,9 @@ type ReleaseEvent = { id:string; version:string; kind:string; notes?:string|null
 type PrivacyStatus = { policy: { audit_retention_days:number; runtime_report_retention_days:number; hardening_block_root:boolean; hardening_block_debugger:boolean; hardening_block_emulator:boolean; hardening_limited_mode:boolean; notification_default:'SILENT'|'LIMITED'|'FULL'; dashboard_show_runtime_details:boolean }; runtimeAggregates:Array<{day:string; app_version:string; result:string; policy_action:string; coarse_reason:string; count:number}>; audit:{total:number; redacted:number}; collected:string[]; notCollected:string[]; dashboardRuntimeDetail:string };
 
 
-const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8080';
+const API = (import.meta.env.VITE_API_URL && import.meta.env.VITE_API_URL !== 'http://localhost:8080')
+  ? import.meta.env.VITE_API_URL
+  : '';
 async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API}${path}`, { credentials: 'include', headers: { 'Content-Type': 'application/json', ...(options.headers ?? {}) }, ...options });
   if (!response.ok) throw new Error(await response.text());
@@ -29,7 +31,16 @@ function Stat({ label, value, icon }: { label: string; value: string | number; i
 
 function Login({ onDone }: { onDone: () => void }) {
   const [email, setEmail] = useState('creator@omerta.local'); const [password, setPassword] = useState(''); const [error, setError] = useState('');
-  async function submit(e: React.FormEvent) { e.preventDefault(); setError(''); try { await api('/creator/login', { method: 'POST', body: JSON.stringify({ email, password }) }); onDone(); } catch { setError('Login failed'); } }
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setError('');
+    try {
+      await api('/creator/login', { method: 'POST', body: JSON.stringify({ email: email.trim(), password: password.trim() }) });
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error && err.message ? `Login failed: ${err.message}` : 'Login failed');
+    }
+  }
   return <main className="loginPage"><Card className="loginCard"><div className="brand"><Shield size={28}/><span>OMERTA</span></div><h1>Creator Dashboard</h1><p className="muted">VPN-only control plane for containers, releases, privacy and server operations.</p><form onSubmit={submit} className="form"><input value={email} onChange={e=>setEmail(e.target.value)} placeholder="Creator email"/><input value={password} onChange={e=>setPassword(e.target.value)} placeholder="Password" type="password"/><button>Enter Dashboard</button>{error && <p className="error">{error}</p>}</form></Card></main>;
 }
 function App() {
