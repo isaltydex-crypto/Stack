@@ -2,6 +2,12 @@ import 'dotenv/config';
 
 const nodeEnv = process.env.NODE_ENV ?? 'development';
 
+function readBoolean(name: string, fallback: boolean) {
+  const value = process.env[name];
+  if (!value) return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
+}
+
 function readSecret(name: string, fallback: string) {
   const value = process.env[name] ?? fallback;
   if (nodeEnv === 'production') {
@@ -30,7 +36,10 @@ export const config = {
   creatorEmail: process.env.CREATOR_EMAIL ?? 'creator@omerta.local',
   creatorPassword: readSecret('CREATOR_PASSWORD', 'change-me-now'),
   dashboardOrigin: process.env.DASHBOARD_ORIGIN ?? 'http://localhost:5173',
-  productionCookies: nodeEnv === 'production',
+  productionCookies: readBoolean(
+    'OMERTA_SECURE_COOKIES',
+    nodeEnv === 'production' && (process.env.DASHBOARD_ORIGIN ?? '').startsWith('https://')
+  ),
   relayPayloadMaxBytes: Number(process.env.RELAY_PAYLOAD_MAX_BYTES ?? 32768),
   inviteDefaultTtlHours: Number(process.env.INVITE_DEFAULT_TTL_HOURS ?? 72),
   inviteMaxAttempts: Number(process.env.INVITE_MAX_ATTEMPTS ?? 8),
