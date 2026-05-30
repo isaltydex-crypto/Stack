@@ -1,0 +1,43 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: omerta
+      POSTGRES_PASSWORD: CHANGE_ME_STRONG_DB_PASSWORD
+      POSTGRES_DB: omerta
+    volumes:
+      - omerta_pg:/var/lib/postgresql/data
+    expose:
+      - "5432"
+
+  omerta-core-server:
+    build: ./omerta-core-server
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 8080
+      DATABASE_URL: postgres://omerta:CHANGE_ME_STRONG_DB_PASSWORD@postgres:5432/omerta
+      JWT_SECRET: CHANGE_ME_LONG_RANDOM_SECRET
+      COOKIE_SECRET: CHANGE_ME_LONG_RANDOM_COOKIE_SECRET
+      DASHBOARD_ORIGIN: https://creator.example.com
+      CREATOR_EMAIL: creator@omerta.local
+      CREATOR_PASSWORD: CHANGE_ME_STRONG_CREATOR_PASSWORD
+    depends_on:
+      - postgres
+    expose:
+      - "8080"
+
+  omerta-creator-dashboard:
+    build:
+      context: ./omerta-creator-dashboard
+      args:
+        VITE_API_URL: https://creator.example.com/api
+    restart: unless-stopped
+    depends_on:
+      - omerta-core-server
+    expose:
+      - "4173"
+
+volumes:
+  omerta_pg:

@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: omerta
+      POSTGRES_PASSWORD: omerta_dev_password
+      POSTGRES_DB: omerta
+    volumes:
+      - omerta_pg:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  omerta-core-server:
+    build: ./omerta-core-server
+    restart: unless-stopped
+    env_file: ./omerta-core-server/.env.example
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "127.0.0.1:8080:8080"
+
+  omerta-creator-dashboard:
+    build:
+      context: ./omerta-creator-dashboard
+      args:
+        VITE_API_URL: http://localhost:8080
+    restart: unless-stopped
+    depends_on:
+      - omerta-core-server
+    ports:
+      - "127.0.0.1:4173:4173"
+
+volumes:
+  omerta_pg:
