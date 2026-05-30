@@ -18,11 +18,8 @@ type ReleaseEvent = { id:string; version:string; kind:string; notes?:string|null
 type PrivacyStatus = { policy: { audit_retention_days:number; runtime_report_retention_days:number; hardening_block_root:boolean; hardening_block_debugger:boolean; hardening_block_emulator:boolean; hardening_limited_mode:boolean; notification_default:'SILENT'|'LIMITED'|'FULL'; dashboard_show_runtime_details:boolean }; runtimeAggregates:Array<{day:string; app_version:string; result:string; policy_action:string; coarse_reason:string; count:number}>; audit:{total:number; redacted:number}; collected:string[]; notCollected:string[]; dashboardRuntimeDetail:string };
 
 
-const API = (import.meta.env.VITE_API_URL && import.meta.env.VITE_API_URL !== 'http://localhost:8080')
-  ? import.meta.env.VITE_API_URL
-  : '';
 async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${API}${path}`, { credentials: 'include', headers: { 'Content-Type': 'application/json', ...(options.headers ?? {}) }, ...options });
+  const response = await fetch(path, { credentials: 'same-origin', headers: { 'Content-Type': 'application/json', ...(options.headers ?? {}) }, ...options });
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<T>;
 }
@@ -96,8 +93,8 @@ function Devices(){ const [rows,setRows]=useState<Device[]>([]); const load=()=>
 function Containers(){
   const [rows,setRows]=useState<Container[]>([]);
   const [name,setName]=useState('main');
-  const [apiUrl,setApiUrl]=useState(API);
-  const [wsUrl,setWsUrl]=useState(API.replace(/^http/,'ws'));
+  const [apiUrl,setApiUrl]=useState(window.location.origin);
+  const [wsUrl,setWsUrl]=useState(window.location.origin.replace(/^http/,'ws') + '/ws');
   const [createAdminInvite,setCreateAdminInvite]=useState(true);
   const [loading,setLoading]=useState(false);
   const [msg,setMsg]=useState('');
