@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { query } from '../db/pool.js';
 import { audit } from '../services/audit.js';
-import { generateInviteCode, hashSecret, sha256, verifySecret } from '../services/security.js';
+import { generateInviteCode, hashSecret } from '../services/security.js';
 
 const createInviteSchema = z.object({
   role: z.enum(['USER','SUB_ADMIN','SOLDATO','CAPO']).default('USER'),
@@ -19,7 +19,6 @@ const updateWipePinsSchema = z.object({
 const remoteWipeSchema = z.object({
   targetUserId: z.string().uuid().or(z.string().min(1)),
   type: z.enum(['APP_WIPE','PHONE_WIPE']).default('APP_WIPE'),
-  pin: z.string().optional(),
   confirmation: z.string().optional(),
   reason: z.string().max(120).optional()
 });
@@ -121,23 +120,6 @@ export async function adminRoutes(app: FastifyInstance) {
 
     if (body.type === 'PHONE_WIPE') {
       if (body.confirmation !== 'WIPE') return reply.code(400).send({ success: false, error: 'WIPE_CONFIRMATION_REQUIRED' });
-      const sec = await query<any>('SELECT phone_wipe_pin_hash, phone_failed_attempts, phone_locked_until FROM wipe_security WHERE id=1');
-      const row = sec.rows[0];
-      if (!row?.phone_wipe_pin_hash) return reply.code(400).send({ success: false, error: 'PHONE_WIPE_PIN_NOT_SET' });
-      if (row.phone_locked_until && new Date(row.phone_locked_until).getTime() > Date.now()) return reply.code(423).send({ success: false, error: 'PHONE_WIPE_PIN_LOCKED' });
-      const validPin = body.pin
-        ? row.phone_wipe_pin_hash.startsWith('$argon2')
-          ? await verifySecret(row.phone_wipe_pin_hash, body.pin)
-          : sha256(body.pin) === row.phone_wipe_pin_hash
-        : false;
-      if (!validPin) {
-        const attempts = (row.phone_failed_attempts ?? 0) + 1;
-        const lockedUntil = attempts >= 3 ? new Date(Date.now() + 10 * 60 * 1000).toISOString() : null;
-        await query('UPDATE wipe_security SET phone_failed_attempts=$1, phone_locked_until=$2, updated_at=now() WHERE id=1', [attempts, lockedUntil]);
-        await audit('user', actor.id, 'admin.wipe.phone.pin_failed', body.targetUserId, { privacyRedacted: true, locked: !!lockedUntil });
-        return reply.code(403).send({ success: false, error: 'INVALID_PHONE_WIPE_PIN' });
-      }
-      await query('UPDATE wipe_security SET phone_failed_attempts=0, phone_locked_until=NULL, updated_at=now() WHERE id=1');
     }
 
     const command = await query<any>(
