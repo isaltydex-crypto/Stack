@@ -5,6 +5,10 @@ import { query } from '../db/pool.js';
 import { audit } from '../services/audit.js';
 
 const createGroupSchema = z.object({ name: z.string().min(1).max(80) });
+const createUserSchema = z.object({
+  nick: z.string().min(1).max(80),
+  role: z.enum(['USER','SUB_ADMIN','ADMIN']).default('USER')
+});
 const accessSchema = z.object({ targetId: z.string().min(1), userIds: z.array(z.string()).default([]), mode: z.string().optional() });
 const noteSchema = z.object({ id: z.string().optional().nullable(), title: z.string().default('Untitled'), body: z.string().default(''), updatedAt: z.number().optional() });
 const sendMessageSchema = z.object({ chatId: z.string().min(1), text: z.string().default(''), kind: z.string().default('text') });
@@ -49,6 +53,19 @@ export async function appRuntimeRoutes(app: FastifyInstance) {
     const res = await query<any>('UPDATE users SET role=$1 WHERE id=$2 AND container_id=$3 RETURNING id, nick, role, disabled_at, created_at', [body.role, body.userId, auth.containerId]);
     if (res.rows.length === 0) return reply.code(404).send({ success: false, error: 'USER_NOT_FOUND' });
     await audit('user', auth.sub, 'app.user.role.update', body.userId, { privacyRedacted: true, role: body.role });
+    return toUser(res.rows[0]);
+  });
+
+  app.post('/v1/users', { preHandler: userAuth }, async (req, reply) => {
+    const auth = (req as any).user as { sub: string; role: string; containerId: string };
+    if (!['ADMIN','SUB_ADMIN'].includes(auth.role)) return reply.code(403).send({ success: false, error: 'FORBIDDEN' });
+    const body = createUserSchema.parse(req.body);
+    if (auth.role === 'SUB_ADMIN' && body.role !== 'USER') return reply.code(403).send({ success: false, error: 'SUB_ADMIN_CAN_ONLY_CREATE_USER' });
+    const res = await query<any>(
+      'INSERT INTO users(container_id, nick, role) VALUES($1,$2,$3) RETURNING id, nick, role, disabled_at, created_at',
+      [auth.containerId, body.nick, body.role]
+    );
+    await audit('user', auth.sub, 'app.user.create', res.rows[0].id, { privacyRedacted: true, role: body.role });
     return toUser(res.rows[0]);
   });
 
