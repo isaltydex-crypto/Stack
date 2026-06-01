@@ -1,6 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { randomUUID } from 'crypto';
 import { query } from '../db/pool.js';
 import { audit } from '../services/audit.js';
 
@@ -10,8 +9,6 @@ const createUserSchema = z.object({
   role: z.enum(['USER','SUB_ADMIN','ADMIN']).default('USER')
 });
 const accessSchema = z.object({ targetId: z.string().min(1), userIds: z.array(z.string()).default([]), mode: z.string().optional() });
-const noteSchema = z.object({ id: z.string().optional().nullable(), title: z.string().default('Untitled'), body: z.string().default(''), updatedAt: z.number().optional() });
-const sendMessageSchema = z.object({ chatId: z.string().min(1), text: z.string().default(''), kind: z.string().default('text') });
 const roleSchema = z.object({ userId: z.string().uuid(), role: z.enum(['USER','SUB_ADMIN','ADMIN']) });
 
 function requireUser(app: FastifyInstance) {
@@ -113,17 +110,8 @@ export async function appRuntimeRoutes(app: FastifyInstance) {
     return res.rows.map((r) => ({ id: r.id, title: r.title, body: '', updatedAt: new Date(r.updated_at).getTime() }));
   });
 
-  app.post('/v1/notes', { preHandler: userAuth }, async (req) => {
-    const auth = (req as any).user as { sub: string; containerId: string };
-    const body = noteSchema.parse(req.body);
-    const res = await query<any>(
-      `INSERT INTO app_note_meta(id, container_id, title, updated_by, updated_at)
-       VALUES(COALESCE($1, gen_random_uuid()),$2,$3,$4,now())
-       ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title, updated_by=EXCLUDED.updated_by, updated_at=now()
-       RETURNING id, title, updated_at`,
-      [body.id ?? null, auth.containerId, body.title, auth.sub]
-    );
-    return { id: res.rows[0].id, title: res.rows[0].title, body: body.body, updatedAt: new Date(res.rows[0].updated_at).getTime() };
+  app.post('/v1/notes', { preHandler: userAuth }, async (_req, reply) => {
+    return reply.code(410).send({ success: false, error: 'PLAINTEXT_NOTES_DISABLED', e2eeEndpoint: '/v1/e2ee/notes/versioned' });
   });
 
   app.post('/v1/notes/access', { preHandler: userAuth }, async (req, reply) => {
@@ -136,8 +124,7 @@ export async function appRuntimeRoutes(app: FastifyInstance) {
 
   app.get('/v1/messages/:chatId', { preHandler: userAuth }, async () => []);
 
-  app.post('/v1/messages', { preHandler: userAuth }, async (req) => {
-    const body = sendMessageSchema.parse(req.body);
-    return { id: randomUUID(), chatId: body.chatId, text: body.text, senderId: 'local', createdAt: Date.now(), kind: body.kind };
+  app.post('/v1/messages', { preHandler: userAuth }, async (_req, reply) => {
+    return reply.code(410).send({ success: false, error: 'PLAINTEXT_MESSAGES_DISABLED', e2eeEndpoint: '/v1/e2ee/messages/fanout' });
   });
 }
