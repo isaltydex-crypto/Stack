@@ -466,3 +466,33 @@ CREATE TABLE IF NOT EXISTS app_note_meta (
 
 CREATE INDEX IF NOT EXISTS idx_app_groups_container ON app_groups(container_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_app_note_meta_container ON app_note_meta(container_id, updated_at DESC);
+
+-- v2.9 crypto period access. NOWPayments purchases grant fixed access periods,
+-- then provision one Omerta container plus a first admin invite after IPN payment confirmation.
+CREATE TABLE IF NOT EXISTS billing_orders (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  provider TEXT NOT NULL DEFAULT 'nowpayments',
+  plan TEXT NOT NULL CHECK (plan IN ('monthly','six_months','yearly')),
+  access_months INT NOT NULL,
+  amount_usd NUMERIC(12,2) NOT NULL,
+  price_currency TEXT NOT NULL DEFAULT 'usd',
+  payout_currency TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','waiting','confirming','paid','failed','expired','cancelled')),
+  provider_invoice_id TEXT,
+  provider_payment_id TEXT,
+  provider_payment_status TEXT,
+  invoice_url TEXT,
+  customer_email TEXT,
+  container_id UUID REFERENCES containers(id) ON DELETE SET NULL,
+  first_admin_invite_id UUID REFERENCES invites(id) ON DELETE SET NULL,
+  first_admin_invite_code TEXT,
+  access_until TIMESTAMPTZ,
+  raw_provider_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  paid_at TIMESTAMPTZ,
+  provisioned_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_billing_orders_status ON billing_orders(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_billing_orders_provider_payment ON billing_orders(provider, provider_payment_id);

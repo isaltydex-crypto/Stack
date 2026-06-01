@@ -12,6 +12,7 @@ import { adminRoutes } from './routes/admin.js';
 import { privacyRoutes } from './routes/privacy.js';
 import { relayRoutes } from './routes/relay.js';
 import { appRuntimeRoutes } from './routes/appRuntime.js';
+import { billingRoutes } from './routes/billing.js';
 import { messageWebSocket } from './websocket/messages.js';
 
 const app = Fastify({ logger: true, trustProxy: true });
@@ -28,6 +29,7 @@ await adminRoutes(app);
 await privacyRoutes(app);
 await relayRoutes(app);
 await appRuntimeRoutes(app);
+await billingRoutes(app);
 await messageWebSocket(app);
 
 await app.listen({ host: '0.0.0.0', port: config.port });

@@ -3,6 +3,11 @@ set -euo pipefail
 
 API_URL=""
 CREATOR_EMAIL=""
+NOWPAYMENTS_API_KEY=""
+NOWPAYMENTS_IPN_SECRET=""
+NOWPAYMENTS_MONTHLY_USD=""
+NOWPAYMENTS_SIX_MONTHS_USD=""
+NOWPAYMENTS_YEARLY_USD=""
 INSTALL_DOCKER="false"
 RESET_ENV="false"
 ASSUME_YES="false"
@@ -19,6 +24,8 @@ Usage:
 Options:
   --api-url          Public API URL, e.g. http://1.2.3.4 or https://api.example.com
   --creator-email    Creator email for initial account/config
+  --nowpayments-api-key     NOWPayments API key
+  --nowpayments-ipn-secret  NOWPayments IPN secret
   --install-docker   Install Docker + Docker Compose plugin on Ubuntu/Debian
   --reset-env        Recreate .env and new secrets even if .env exists
   --yes, -y          Accept default answers for prompts
@@ -29,6 +36,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --api-url) API_URL="${2:-}"; shift 2 ;;
     --creator-email) CREATOR_EMAIL="${2:-}"; shift 2 ;;
+    --nowpayments-api-key) NOWPAYMENTS_API_KEY="${2:-}"; shift 2 ;;
+    --nowpayments-ipn-secret) NOWPAYMENTS_IPN_SECRET="${2:-}"; shift 2 ;;
     --install-docker) INSTALL_DOCKER="true"; shift ;;
     --reset-env) RESET_ENV="true"; shift ;;
     --yes|-y) ASSUME_YES="true"; shift ;;
@@ -99,6 +108,25 @@ DEFAULT_API_URL=""
 prompt_value API_URL "VPS API URL, t.ex. http://DIN_VPS_IP" "$DEFAULT_API_URL"
 prompt_value CREATOR_EMAIL "Creator email" "creator@omerta.local"
 
+if [[ "$ASSUME_YES" != "true" ]]; then
+  read -rp "NOWPayments API key (tom = inaktivera crypto checkout) [${NOWPAYMENTS_API_KEY}]: " NP_KEY_INPUT
+  NOWPAYMENTS_API_KEY="${NP_KEY_INPUT:-$NOWPAYMENTS_API_KEY}"
+  if [[ -n "$NOWPAYMENTS_API_KEY" ]]; then
+    read -rp "NOWPayments IPN secret [${NOWPAYMENTS_IPN_SECRET}]: " NP_SECRET_INPUT
+    NOWPAYMENTS_IPN_SECRET="${NP_SECRET_INPUT:-$NOWPAYMENTS_IPN_SECRET}"
+  fi
+  read -rp "Pris 1 manad USD [29]: " NOWPAYMENTS_MONTHLY_USD
+  NOWPAYMENTS_MONTHLY_USD="${NOWPAYMENTS_MONTHLY_USD:-29}"
+  read -rp "Pris 6 manader USD [149]: " NOWPAYMENTS_SIX_MONTHS_USD
+  NOWPAYMENTS_SIX_MONTHS_USD="${NOWPAYMENTS_SIX_MONTHS_USD:-149}"
+  read -rp "Pris 1 ar USD [249]: " NOWPAYMENTS_YEARLY_USD
+  NOWPAYMENTS_YEARLY_USD="${NOWPAYMENTS_YEARLY_USD:-249}"
+else
+  NOWPAYMENTS_MONTHLY_USD="${NOWPAYMENTS_MONTHLY_USD:-29}"
+  NOWPAYMENTS_SIX_MONTHS_USD="${NOWPAYMENTS_SIX_MONTHS_USD:-149}"
+  NOWPAYMENTS_YEARLY_USD="${NOWPAYMENTS_YEARLY_USD:-249}"
+fi
+
 if [[ "$INSTALL_DOCKER" != "true" ]]; then
   INSTALL_DOCKER_PROMPT="ask"
   prompt_yes_no INSTALL_DOCKER_PROMPT "Installera Docker automatiskt om det saknas?" "true"
@@ -115,6 +143,7 @@ echo
 echo "Deploy config:"
 echo "  API URL:        $API_URL"
 echo "  Creator email:  $CREATOR_EMAIL"
+echo "  NOWPayments:    $([[ -n "$NOWPAYMENTS_API_KEY" ]] && echo enabled || echo disabled)"
 echo "  Install Docker: $INSTALL_DOCKER"
 echo "  Reset .env:     $RESET_ENV"
 echo
@@ -196,11 +225,29 @@ if [[ ! -f .env || "$RESET_ENV" == "true" ]]; then
   set_env "COOKIE_SECRET" "$(gen_secret)"
   set_env "POSTGRES_PASSWORD" "$DB_PASSWORD"
   set_env "DATABASE_URL" "postgres://omerta:${DB_PASSWORD}@omerta-postgres:5432/omerta"
+  set_env "NOWPAYMENTS_API_KEY" "$NOWPAYMENTS_API_KEY"
+  set_env "NOWPAYMENTS_IPN_SECRET" "$NOWPAYMENTS_IPN_SECRET"
+  set_env "NOWPAYMENTS_PRICE_CURRENCY" "usd"
+  set_env "NOWPAYMENTS_PAYOUT_CURRENCY" "usdttrc20"
+  set_env "NOWPAYMENTS_MONTHLY_USD" "$NOWPAYMENTS_MONTHLY_USD"
+  set_env "NOWPAYMENTS_SIX_MONTHS_USD" "$NOWPAYMENTS_SIX_MONTHS_USD"
+  set_env "NOWPAYMENTS_YEARLY_USD" "$NOWPAYMENTS_YEARLY_USD"
+  set_env "NOWPAYMENTS_API_BASE_URL" "https://api.nowpayments.io/v1"
+  set_env "BILLING_RETURN_URL" "omerta://billing/return"
+  set_env "BILLING_CANCEL_URL" "omerta://billing/cancel"
   echo "$CREATOR_PASSWORD" > creator-initial-password.txt
   chmod 600 creator-initial-password.txt
 else
   echo "[OK] Existing .env kept. Use --reset-env to recreate it."
 fi
+
+if [[ -n "$NOWPAYMENTS_API_KEY" || -n "$NOWPAYMENTS_IPN_SECRET" ]]; then
+  set_env "NOWPAYMENTS_API_KEY" "$NOWPAYMENTS_API_KEY"
+  set_env "NOWPAYMENTS_IPN_SECRET" "$NOWPAYMENTS_IPN_SECRET"
+fi
+set_env "NOWPAYMENTS_MONTHLY_USD" "$NOWPAYMENTS_MONTHLY_USD"
+set_env "NOWPAYMENTS_SIX_MONTHS_USD" "$NOWPAYMENTS_SIX_MONTHS_USD"
+set_env "NOWPAYMENTS_YEARLY_USD" "$NOWPAYMENTS_YEARLY_USD"
 
 echo "[3/6] Stopping old containers..."
 docker compose -f "$COMPOSE_FILE" down || true
