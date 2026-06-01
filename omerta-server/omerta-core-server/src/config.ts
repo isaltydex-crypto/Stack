@@ -38,6 +38,7 @@ export const config = {
   dashboardOrigin: process.env.DASHBOARD_ORIGIN ?? 'http://localhost:5173',
   publicApiUrl: process.env.PUBLIC_API_URL ?? 'http://localhost:8080',
   publicWsUrl: process.env.PUBLIC_WS_URL ?? 'ws://localhost:8080/ws',
+  provisioningSecret: process.env.OMERTA_PROVISIONING_SECRET ?? '',
   productionCookies: readBoolean('OMERTA_SECURE_COOKIES', false),
   relayPayloadMaxBytes: Number(process.env.RELAY_PAYLOAD_MAX_BYTES ?? 32768),
   inviteDefaultTtlHours: Number(process.env.INVITE_DEFAULT_TTL_HOURS ?? 72),

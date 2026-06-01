@@ -472,6 +472,7 @@ CREATE INDEX IF NOT EXISTS idx_app_note_meta_container ON app_note_meta(containe
 CREATE TABLE IF NOT EXISTS billing_orders (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   provider TEXT NOT NULL DEFAULT 'nowpayments',
+  external_order_id TEXT,
   plan TEXT NOT NULL CHECK (plan IN ('monthly','six_months','yearly')),
   access_months INT NOT NULL,
   amount_usd NUMERIC(12,2) NOT NULL,
@@ -494,5 +495,7 @@ CREATE TABLE IF NOT EXISTS billing_orders (
   provisioned_at TIMESTAMPTZ
 );
 
+ALTER TABLE billing_orders ADD COLUMN IF NOT EXISTS external_order_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_billing_orders_status ON billing_orders(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_billing_orders_provider_payment ON billing_orders(provider, provider_payment_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_orders_external_order ON billing_orders(provider, external_order_id) WHERE external_order_id IS NOT NULL;

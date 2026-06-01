@@ -223,6 +223,8 @@ if [[ ! -f .env || "$RESET_ENV" == "true" ]]; then
   set_env "CREATOR_PASSWORD" "$CREATOR_PASSWORD"
   set_env "JWT_SECRET" "$(gen_secret)"
   set_env "COOKIE_SECRET" "$(gen_secret)"
+  PROVISIONING_SECRET="$(gen_secret)"
+  set_env "OMERTA_PROVISIONING_SECRET" "$PROVISIONING_SECRET"
   set_env "POSTGRES_PASSWORD" "$DB_PASSWORD"
   set_env "DATABASE_URL" "postgres://omerta:${DB_PASSWORD}@omerta-postgres:5432/omerta"
   set_env "NOWPAYMENTS_API_KEY" "$NOWPAYMENTS_API_KEY"
@@ -236,7 +238,9 @@ if [[ ! -f .env || "$RESET_ENV" == "true" ]]; then
   set_env "BILLING_RETURN_URL" "omerta://billing/return"
   set_env "BILLING_CANCEL_URL" "omerta://billing/cancel"
   echo "$CREATOR_PASSWORD" > creator-initial-password.txt
+  echo "$PROVISIONING_SECRET" > omerta-provisioning-secret.txt
   chmod 600 creator-initial-password.txt
+  chmod 600 omerta-provisioning-secret.txt
 else
   echo "[OK] Existing .env kept. Use --reset-env to recreate it."
 fi
@@ -244,6 +248,12 @@ fi
 if [[ -n "$NOWPAYMENTS_API_KEY" || -n "$NOWPAYMENTS_IPN_SECRET" ]]; then
   set_env "NOWPAYMENTS_API_KEY" "$NOWPAYMENTS_API_KEY"
   set_env "NOWPAYMENTS_IPN_SECRET" "$NOWPAYMENTS_IPN_SECRET"
+fi
+if ! grep -q "^OMERTA_PROVISIONING_SECRET=" .env 2>/dev/null || grep -q "^OMERTA_PROVISIONING_SECRET=$" .env 2>/dev/null || grep -q "^OMERTA_PROVISIONING_SECRET=CHANGE_" .env 2>/dev/null; then
+  PROVISIONING_SECRET="$(gen_secret)"
+  set_env "OMERTA_PROVISIONING_SECRET" "$PROVISIONING_SECRET"
+  echo "$PROVISIONING_SECRET" > omerta-provisioning-secret.txt
+  chmod 600 omerta-provisioning-secret.txt
 fi
 set_env "NOWPAYMENTS_MONTHLY_USD" "$NOWPAYMENTS_MONTHLY_USD"
 set_env "NOWPAYMENTS_SIX_MONTHS_USD" "$NOWPAYMENTS_SIX_MONTHS_USD"
@@ -266,6 +276,7 @@ echo "Deploy complete."
 echo "API URL: $API_URL"
 echo "Creator email: $CREATOR_EMAIL"
 [[ -f creator-initial-password.txt ]] && echo "Creator initial password: $(pwd)/creator-initial-password.txt"
+[[ -f omerta-provisioning-secret.txt ]] && echo "Webshop provisioning secret: $(pwd)/omerta-provisioning-secret.txt"
 echo
 echo "Logs: docker compose -f $COMPOSE_FILE logs -f"
 

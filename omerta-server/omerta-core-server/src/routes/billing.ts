@@ -10,6 +10,14 @@ const createOrderSchema = z.object({
   plan: z.enum(['monthly', 'six_months', 'yearly']),
   customerEmail: z.string().email().optional()
 });
+const provisionSchema = z.object({
+  externalOrderId: z.string().min(3).max(160),
+  plan: z.enum(['monthly', 'six_months', 'yearly']),
+  customerEmail: z.string().email().optional(),
+  amountUsd: z.number().positive().optional(),
+  source: z.string().min(2).max(80).default('webshop'),
+  metadata: z.record(z.unknown()).optional()
+});
 const statusParamsSchema = z.object({ orderId: z.string().uuid() });
 
 const paidStatuses = new Set(['confirmed', 'finished']);
@@ -41,6 +49,14 @@ function verifyNowPaymentsSignature(body: unknown, signature: string | undefined
   if (!/^[a-f0-9]+$/i.test(actual)) return false;
   if (expected.length !== actual.length) return false;
   return crypto.timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(actual, 'hex'));
+}
+
+function verifyProvisioningAuth(req: FastifyRequest) {
+  if (!config.provisioningSecret) return false;
+  const header = req.headers.authorization ?? '';
+  const token = header.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : '';
+  if (!token || token.length !== config.provisioningSecret.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(token), Buffer.from(config.provisioningSecret));
 }
 
 function publicOrder(order: any) {
@@ -120,6 +136,46 @@ async function provisionPaidOrder(orderId: string) {
 }
 
 export async function billingRoutes(app: FastifyInstance) {
+  app.post('/internal/billing/provision', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
+    if (!config.provisioningSecret) {
+      return reply.code(503).send({ success: false, error: 'PROVISIONING_NOT_CONFIGURED' });
+    }
+    if (!verifyProvisioningAuth(req)) {
+      await audit('system', null, 'billing.provision.unauthorized', undefined, { privacyRedacted: true });
+      return reply.code(401).send({ success: false, error: 'UNAUTHORIZED' });
+    }
+
+    const body = provisionSchema.parse(req.body);
+    const plan = planConfig(body.plan);
+    const provider = body.source || 'webshop';
+    const rawPayload = JSON.stringify({
+      externalOrderId: body.externalOrderId,
+      source: provider,
+      customerEmail: body.customerEmail ?? null,
+      metadata: body.metadata ?? {}
+    });
+
+    const orderRes = await query<any>(
+      `INSERT INTO billing_orders(provider, external_order_id, plan, access_months, amount_usd, price_currency, payout_currency, status, provider_invoice_id, customer_email, raw_provider_payload, paid_at)
+       VALUES($1,$2,$3,$4,$5,'usd','external','paid',$2,$6,$7,now())
+       ON CONFLICT(provider, external_order_id) WHERE external_order_id IS NOT NULL
+       DO UPDATE SET updated_at=now()
+       RETURNING *`,
+      [provider, body.externalOrderId, body.plan, plan.months, body.amountUsd ?? plan.amountUsd, body.customerEmail ?? null, rawPayload]
+    );
+    const order = orderRes.rows[0];
+    const provisioned = order.provisioned_at ? order : await provisionPaidOrder(order.id);
+    const publicRes = await query<any>(
+      `SELECT billing_orders.*, containers.name AS container_name, containers.api_url, containers.ws_url
+       FROM billing_orders
+       LEFT JOIN containers ON containers.id=billing_orders.container_id
+       WHERE billing_orders.id=$1`,
+      [provisioned.id]
+    );
+    await audit('system', null, 'billing.provision.external', order.id, { provider, externalOrderId: body.externalOrderId, plan: body.plan });
+    return publicOrder(publicRes.rows[0]);
+  });
+
   app.post('/billing/nowpayments/create-invoice', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
     if (!config.nowPaymentsApiKey) {
       return reply.code(503).send({ success: false, error: 'NOWPAYMENTS_NOT_CONFIGURED' });
