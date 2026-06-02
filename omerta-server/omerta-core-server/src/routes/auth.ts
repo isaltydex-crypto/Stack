@@ -122,7 +122,10 @@ export async function authRoutes(app: FastifyInstance) {
 
   app.post('/auth/refresh', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req, reply) => {
     const body = refreshSchema.parse(req.body);
-    if (!assertFreshClientClock(body.timestamp)) return reply.code(401).send({ success: false, error: 'STALE_CLIENT_TIMESTAMP' });
+    if (!assertFreshClientClock(body.timestamp)) {
+      await audit('system', null, 'session.refresh.stale_timestamp', undefined, { privacyRedacted: true });
+      return reply.code(401).send({ success: false, error: 'STALE_CLIENT_TIMESTAMP' });
+    }
     const result = await query<any>(
       `SELECT sessions.*,
               sessions.revoked_at AS session_revoked_at,
@@ -142,7 +145,10 @@ export async function authRoutes(app: FastifyInstance) {
       if (ok && !session.active) matchedInactiveSession = session;
       if (ok && session.active && !session.deleted_at && !session.disabled_at && !session.device_revoked_at && !session.kill_switch && !session.session_revoked_at && new Date(session.expires_at) > new Date()) {
         const nonceOk = await consumeClientNonce(session.device_id, body.nonce, body.timestamp);
-        if (!nonceOk) return reply.code(401).send({ success: false, error: 'REPLAY_DETECTED' });
+        if (!nonceOk) {
+          await audit('user', session.user_id, 'session.refresh.replay_detected', session.device_id, { privacyRedacted: true });
+          return reply.code(401).send({ success: false, error: 'REPLAY_DETECTED' });
+        }
         const newRefreshToken = generateRefreshToken();
         const inserted = await query<any>(
           `INSERT INTO sessions(user_id, device_id, refresh_token_hash, rotation_counter, expires_at, last_used_at)
@@ -171,6 +177,10 @@ export async function authRoutes(app: FastifyInstance) {
 
   app.post('/auth/config', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
     const body = configSchema.parse(req.body);
+    if (!assertFreshClientClock(body.timestamp)) {
+      await audit('system', null, 'runtime.config.stale_timestamp', undefined, { privacyRedacted: true });
+      return reply.code(401).send({ success: false, error: 'STALE_CLIENT_TIMESTAMP' });
+    }
     const result = await query<any>(
       `SELECT devices.id AS device_id, containers.remote_config, containers.feature_flags, containers.kill_switch, devices.revoked_at, users.disabled_at, users.deleted_at
        FROM devices JOIN users ON users.id=devices.user_id JOIN containers ON containers.id=users.container_id
@@ -178,9 +188,15 @@ export async function authRoutes(app: FastifyInstance) {
       [body.deviceHash]
     );
     const row = result.rows[0];
-    if (!row || row.revoked_at || row.disabled_at || row.deleted_at) return reply.code(401).send({ success: false, error: 'DEVICE_DISABLED' });
+    if (!row || row.revoked_at || row.disabled_at || row.deleted_at) {
+      await audit('system', null, 'runtime.config.disabled_device', undefined, { privacyRedacted: true });
+      return reply.code(401).send({ success: false, error: 'DEVICE_DISABLED' });
+    }
     const nonceOk = await consumeClientNonce(row.device_id ?? row.id ?? body.deviceHash, body.nonce, body.timestamp);
-    if (!nonceOk) return reply.code(401).send({ success: false, error: 'REPLAY_DETECTED' });
+    if (!nonceOk) {
+      await audit('system', null, 'runtime.config.replay_detected', row.device_id, { privacyRedacted: true });
+      return reply.code(401).send({ success: false, error: 'REPLAY_DETECTED' });
+    }
     return { success: true, killSwitch: row.kill_switch, featureFlags: row.feature_flags, remoteConfig: row.remote_config };
   });
 
@@ -188,7 +204,10 @@ export async function authRoutes(app: FastifyInstance) {
   app.get('/v1/commands', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
     const auth = req.headers.authorization;
     const token = auth?.startsWith('Bearer ') ? auth.slice(7) : null;
-    if (!token) return reply.code(401).send({ success: false, error: 'UNAUTHORIZED' });
+    if (!token) {
+      await audit('system', null, 'commands.poll.unauthorized', undefined, { privacyRedacted: true });
+      return reply.code(401).send({ success: false, error: 'UNAUTHORIZED' });
+    }
     try {
       const payload = app.jwt.verify<{ sub: string; deviceId: string; type: string }>(token);
       if (payload.type !== 'user') throw new Error('not user');
@@ -223,6 +242,7 @@ export async function authRoutes(app: FastifyInstance) {
       }));
       return commands;
     } catch {
+      await audit('system', null, 'commands.poll.unauthorized', undefined, { privacyRedacted: true });
       return reply.code(401).send({ success: false, error: 'UNAUTHORIZED' });
     }
   });
@@ -230,7 +250,10 @@ export async function authRoutes(app: FastifyInstance) {
   app.post('/v1/commands/ack', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
     const auth = req.headers.authorization;
     const token = auth?.startsWith('Bearer ') ? auth.slice(7) : null;
-    if (!token) return reply.code(401).send({ success: false, error: 'UNAUTHORIZED' });
+    if (!token) {
+      await audit('system', null, 'commands.ack.unauthorized', undefined, { privacyRedacted: true });
+      return reply.code(401).send({ success: false, error: 'UNAUTHORIZED' });
+    }
     try {
       const payload = app.jwt.verify<{ sub: string; deviceId: string; type: string }>(token);
       if (payload.type !== 'user') throw new Error('not user');
@@ -255,6 +278,7 @@ export async function authRoutes(app: FastifyInstance) {
       await audit('user', payload.sub, 'wipe.command.ack', body.commandId, { privacyRedacted: true, status: body.status });
       return { success: true };
     } catch {
+      await audit('system', null, 'commands.ack.unauthorized', undefined, { privacyRedacted: true });
       return reply.code(401).send({ success: false, error: 'UNAUTHORIZED' });
     }
   });
@@ -275,6 +299,7 @@ export async function authRoutes(app: FastifyInstance) {
         return { success: true };
       }
     }
+    await audit('system', null, 'account.delete.logout.failed', undefined, { privacyRedacted: true });
     return reply.code(401).send({ success: false, error: 'INVALID_SESSION' });
   });
 }

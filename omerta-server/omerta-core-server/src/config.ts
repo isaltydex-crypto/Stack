@@ -27,9 +27,14 @@ function readSecret(name: string, fallback: string) {
   return value;
 }
 
+function readNumber(name: string, fallback: number) {
+  const value = Number(process.env[name] ?? fallback);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
 export const config = {
   nodeEnv,
-  port: Number(process.env.PORT ?? 8080),
+  port: readNumber('PORT', 8080),
   databaseUrl: process.env.DATABASE_URL ?? 'postgres://omerta:omerta_dev_password@localhost:5432/omerta',
   jwtSecret: readSecret('JWT_SECRET', 'dev-only-change-me'),
   cookieSecret: readSecret('COOKIE_SECRET', 'dev-cookie-change-me'),
@@ -40,18 +45,21 @@ export const config = {
   publicWsUrl: process.env.PUBLIC_WS_URL ?? 'ws://localhost:8080/ws',
   provisioningSecret: process.env.OMERTA_PROVISIONING_SECRET ?? '',
   productionCookies: readBoolean('OMERTA_SECURE_COOKIES', false),
-  relayPayloadMaxBytes: Number(process.env.RELAY_PAYLOAD_MAX_BYTES ?? 32768),
-  inviteDefaultTtlHours: Number(process.env.INVITE_DEFAULT_TTL_HOURS ?? 72),
-  inviteMaxAttempts: Number(process.env.INVITE_MAX_ATTEMPTS ?? 8),
-  inviteLockMinutes: Number(process.env.INVITE_LOCK_MINUTES ?? 30),
+  maxBodyBytes: readNumber('OMERTA_MAX_BODY_BYTES', 262144),
+  globalRateLimitMax: readNumber('OMERTA_RATE_LIMIT_MAX', nodeEnv === 'production' ? 60 : 120),
+  globalRateLimitWindow: process.env.OMERTA_RATE_LIMIT_WINDOW ?? '1 minute',
+  relayPayloadMaxBytes: readNumber('RELAY_PAYLOAD_MAX_BYTES', 32768),
+  inviteDefaultTtlHours: readNumber('INVITE_DEFAULT_TTL_HOURS', 72),
+  inviteMaxAttempts: readNumber('INVITE_MAX_ATTEMPTS', 8),
+  inviteLockMinutes: readNumber('INVITE_LOCK_MINUTES', 30),
   nowPaymentsApiBaseUrl: process.env.NOWPAYMENTS_API_BASE_URL ?? 'https://api.nowpayments.io/v1',
   nowPaymentsApiKey: process.env.NOWPAYMENTS_API_KEY ?? '',
   nowPaymentsIpnSecret: process.env.NOWPAYMENTS_IPN_SECRET ?? '',
   nowPaymentsPriceCurrency: process.env.NOWPAYMENTS_PRICE_CURRENCY ?? 'usd',
   nowPaymentsPayoutCurrency: process.env.NOWPAYMENTS_PAYOUT_CURRENCY ?? 'usdttrc20',
-  nowPaymentsMonthlyUsd: Number(process.env.NOWPAYMENTS_MONTHLY_USD ?? 29),
-  nowPaymentsSixMonthsUsd: Number(process.env.NOWPAYMENTS_SIX_MONTHS_USD ?? 149),
-  nowPaymentsYearlyUsd: Number(process.env.NOWPAYMENTS_YEARLY_USD ?? 249),
+  nowPaymentsMonthlyUsd: readNumber('NOWPAYMENTS_MONTHLY_USD', 29),
+  nowPaymentsSixMonthsUsd: readNumber('NOWPAYMENTS_SIX_MONTHS_USD', 149),
+  nowPaymentsYearlyUsd: readNumber('NOWPAYMENTS_YEARLY_USD', 249),
   billingReturnUrl: process.env.BILLING_RETURN_URL ?? 'omerta://billing/return',
   billingCancelUrl: process.env.BILLING_CANCEL_URL ?? 'omerta://billing/cancel'
 };

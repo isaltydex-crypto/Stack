@@ -17,18 +17,35 @@ declare module 'fastify' {
 export async function registerPlugins(app: FastifyInstance) {
   app.decorate('pg', pool);
   await app.register(helmet, {
-    contentSecurityPolicy: config.nodeEnv === 'production' ? undefined : false,
-    hsts: config.nodeEnv === 'production' ? { maxAge: 15552000, includeSubDomains: true } : false
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+    frameguard: { action: 'deny' },
+    hsts: config.nodeEnv === 'production' ? { maxAge: 31536000, includeSubDomains: true, preload: true } : false,
+    noSniff: true,
+    referrerPolicy: { policy: 'no-referrer' }
   });
-  await app.register(cors, { origin: [config.dashboardOrigin], credentials: true });
+  await app.register(cors, {
+    origin: (origin, cb) => {
+      if (!origin || origin === config.dashboardOrigin) return cb(null, true);
+      return cb(null, false);
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
+  });
   await app.register(cookie, { secret: config.cookieSecret });
   await app.register(jwt, {
     secret: config.jwtSecret,
     cookie: { cookieName: 'omerta_creator', signed: false }
   });
   await app.register(rateLimit, {
-    max: config.nodeEnv === 'production' ? 60 : 120,
-    timeWindow: '1 minute'
+    max: config.globalRateLimitMax,
+    timeWindow: config.globalRateLimitWindow,
+    addHeaders: {
+      'x-ratelimit-limit': true,
+      'x-ratelimit-remaining': true,
+      'x-ratelimit-reset': true,
+      'retry-after': true
+    }
   });
   await app.register(websocket);
 }
