@@ -16,7 +16,97 @@ cd "$ROOT_DIR"
 green() { printf '\033[0;32m%s\033[0m\n' "$*"; }
 yellow() { printf '\033[1;33m%s\033[0m\n' "$*"; }
 red() { printf '\033[0;31m%s\033[0m\n' "$*"; }
-pause() { read -rp "Tryck Enter for att fortsatta..." _; }
+blue() { printf '\033[0;36m%s\033[0m\n' "$*"; }
+muted() { printf '\033[2m%s\033[0m\n' "$*"; }
+pause() { echo; read -rp "Tryck Enter for att fortsatta..." _; }
+
+line() {
+  printf '%s\n' "------------------------------------------------------------"
+}
+
+screen() {
+  clear || true
+  blue "OMERTA Control Center"
+  line
+  printf 'Root:    %s\n' "$ROOT_DIR"
+  printf 'Compose: %s\n' "$COMPOSE_FILE"
+  printf 'API:     %s\n' "$API_URL"
+  if [[ -f "$ENV_FILE" ]]; then
+    green "Env:     $ENV_FILE"
+  else
+    yellow "Env:     $ENV_FILE saknas"
+  fi
+  line
+}
+
+section() {
+  echo
+  blue "$1"
+  line
+}
+
+option() {
+  printf '  %2s) %s\n' "$1" "$2"
+}
+
+confirm() {
+  local prompt="$1"
+  local answer
+  read -rp "$prompt [y/N]: " answer
+  [[ "$answer" =~ ^[Yy]$ ]]
+}
+
+quick_status() {
+  if [[ ! -f "$ENV_FILE" ]] || ! command -v docker >/dev/null 2>&1; then
+    muted "Snabbstatus: ej tillganglig innan Docker/.env finns."
+    return 0
+  fi
+  local running total
+  running="$(compose ps --status running --services 2>/dev/null | wc -l | tr -d ' ')"
+  total="$(compose ps --services 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "${running:-0}" -gt 0 ]]; then
+    green "Snabbstatus: $running/$total services running"
+  else
+    yellow "Snabbstatus: inga services verkar vara igang"
+  fi
+}
+
+show_readiness() {
+  local ok=true
+  if command -v docker >/dev/null 2>&1; then
+    green "[ok] Docker finns"
+  else
+    yellow "[!] Docker saknas eller finns inte i PATH"
+    ok=false
+  fi
+  if [[ -f "$ENV_FILE" ]]; then
+    green "[ok] $ENV_FILE finns"
+  else
+    yellow "[!] $ENV_FILE saknas"
+    ok=false
+  fi
+  if [[ -f "$COMPOSE_FILE" ]]; then
+    green "[ok] $COMPOSE_FILE finns"
+  else
+    red "[x] $COMPOSE_FILE saknas"
+    ok=false
+  fi
+  if [[ "$ok" == false ]]; then
+    echo
+    muted "Ny VPS? Kor forst:"
+    echo "  chmod +x deploy-server-dashboard.sh omerta-control.sh"
+    echo "  ./deploy-server-dashboard.sh"
+  fi
+}
+
+run_action() {
+  local title="$1"
+  shift
+  screen
+  section "$title"
+  "$@"
+  pause
+}
 
 need_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -292,62 +382,182 @@ lock_dashboard_to_wireguard() {
 }
 
 wireguard_menu() {
-  echo
-  echo "WireGuard / Dashboard"
-  echo "1) Installera/konfigurera WireGuard server + creator-klient"
-  echo "2) Las dashboarden till WireGuard-subnet i nginx"
-  echo "3) Visa WireGuard status"
-  echo "4) Tillbaka"
-  read -rp "Val: " choice
-  case "$choice" in
-    1) configure_wireguard ;;
-    2) lock_dashboard_to_wireguard ;;
-    3) wg show ;;
-    4) return 0 ;;
-    *) red "Okant val." ;;
-  esac
+  while true; do
+    screen
+    section "Secure access"
+    option 1 "Installera/konfigurera WireGuard server + creator-klient"
+    option 2 "Las dashboarden till WireGuard-subnet i nginx"
+    option 3 "Visa WireGuard status"
+    option 0 "Tillbaka"
+    echo
+    read -rp "Val: " choice
+    case "$choice" in
+      1) run_action "WireGuard setup" configure_wireguard ;;
+      2) run_action "Dashboard VPN lock" lock_dashboard_to_wireguard ;;
+      3) run_action "WireGuard status" wg show ;;
+      0) return 0 ;;
+      *) red "Okant val."; pause ;;
+    esac
+  done
+}
+
+stack_menu() {
+  while true; do
+    screen
+    quick_status
+    section "Stack och containers"
+    option 1 "Status / health"
+    option 2 "Starta containers"
+    option 3 "Starta om containers"
+    option 4 "Bygg om + starta om containers"
+    option 5 "Stoppa containers"
+    option 6 "Loggar"
+    option 0 "Tillbaka"
+    echo
+    read -rp "Val: " choice
+    case "$choice" in
+      1) run_action "Status / health" show_status ;;
+      2) run_action "Starta containers" start_stack ;;
+      3) run_action "Starta om containers" restart_stack ;;
+      4)
+        if confirm "Bygga om alla images kan ta ett par minuter. Fortsatt?"; then
+          run_action "Bygg om + starta om" build_restart_stack
+        fi
+        ;;
+      5)
+        if confirm "Stoppa containers? Databasvolymer behalls."; then
+          run_action "Stoppa containers" stop_stack
+        fi
+        ;;
+      6) show_logs ;;
+      0) return 0 ;;
+      *) red "Okant val."; pause ;;
+    esac
+  done
+}
+
+access_menu() {
+  while true; do
+    screen
+    section "Creator access"
+    option 1 "Logga in som creator for API-kommandon"
+    option 2 "Byt/resetta creator-losenord"
+    option 3 "Visa aktiv API och creator email"
+    option 0 "Tillbaka"
+    echo
+    read -rp "Val: " choice
+    case "$choice" in
+      1) run_action "Creator login" login_creator ;;
+      2)
+        if confirm "Resetta creator-losenord och starta om servern?"; then
+          run_action "Reset creator password" reset_creator_password
+        fi
+        ;;
+      3)
+        screen
+        section "Aktiv konfiguration"
+        printf 'API_URL:        %s\n' "$API_URL"
+        printf 'CREATOR_EMAIL:  %s\n' "$(env_value CREATOR_EMAIL)"
+        printf 'PUBLIC_API_URL: %s\n' "$(env_value PUBLIC_API_URL)"
+        printf 'PUBLIC_WS_URL:  %s\n' "$(env_value PUBLIC_WS_URL)"
+        pause
+        ;;
+      0) return 0 ;;
+      *) red "Okant val."; pause ;;
+    esac
+  done
+}
+
+workspace_menu() {
+  while true; do
+    screen
+    section "Workspaces och invites"
+    muted "Tips: logga in som creator innan du skapar containers eller invites."
+    option 1 "Skapa container/workspace + valfri forsta admin invite"
+    option 2 "Skapa ny invite/admin-kod"
+    option 3 "Lista containers"
+    option 4 "Lista invites"
+    option 0 "Tillbaka"
+    echo
+    read -rp "Val: " choice
+    case "$choice" in
+      1) run_action "Skapa workspace" create_container ;;
+      2) run_action "Skapa invite" create_invite ;;
+      3) run_action "Containers" api_json GET /creator/containers ;;
+      4) run_action "Invites" api_json GET /creator/invites ;;
+      0) return 0 ;;
+      *) red "Okant val."; pause ;;
+    esac
+  done
+}
+
+backup_menu() {
+  while true; do
+    screen
+    section "Backup och restore"
+    option 1 "Backup databas"
+    option 2 "Restore databas fran .sql-backup"
+    option 0 "Tillbaka"
+    echo
+    read -rp "Val: " choice
+    case "$choice" in
+      1) run_action "Backup databas" backup_db ;;
+      2)
+        if confirm "Restore skriver tillbaka en backup till databasen. Fortsatt?"; then
+          run_action "Restore databas" restore_db
+        fi
+        ;;
+      0) return 0 ;;
+      *) red "Okant val."; pause ;;
+    esac
+  done
+}
+
+security_menu() {
+  while true; do
+    screen
+    section "Security operations"
+    option 1 "WireGuard + dashboard VPN"
+    option 2 "Visa audit-loggar"
+    option 3 "Visa release policy"
+    option 4 "Visa wipe commands"
+    option 0 "Tillbaka"
+    echo
+    read -rp "Val: " choice
+    case "$choice" in
+      1) wireguard_menu ;;
+      2) run_action "Audit logs" api_json GET /creator/audit-logs ;;
+      3) run_action "Release policy" api_json GET /release/policy ;;
+      4) run_action "Wipe commands" api_json GET /creator/wipe/commands ;;
+      0) return 0 ;;
+      *) red "Okant val."; pause ;;
+    esac
+  done
 }
 
 main_menu() {
   while true; do
-    clear || true
-    echo "OMERTA Server Control"
-    echo "====================="
-    echo "Root: $ROOT_DIR"
-    echo "Compose: $COMPOSE_FILE"
-    echo "API: $API_URL"
-    echo
-    echo "1) Status / health"
-    echo "2) Starta containers"
-    echo "3) Bygg om + starta om containers"
-    echo "4) Starta om containers"
-    echo "5) Stoppa containers"
-    echo "6) Loggar"
-    echo "7) Backup databas"
-    echo "8) Restore databas"
-    echo "9) Logga in som creator for API-kommandon"
-    echo "10) Skapa container/workspace + valfri forsta admin invite"
-    echo "11) Skapa ny invite/admin-kod"
-    echo "12) Byt/resetta creator-losenord"
-    echo "13) WireGuard + dashboard VPN"
-    echo "14) Avsluta"
+    screen
+    quick_status
+    show_readiness
+    section "Huvudmeny"
+    option 1 "Stack och containers"
+    option 2 "Creator access"
+    option 3 "Workspaces och invites"
+    option 4 "Security operations"
+    option 5 "Backup och restore"
+    option 6 "Snabbstatus / health"
+    option 0 "Avsluta"
     echo
     read -rp "Val: " choice
     case "$choice" in
-      1) show_status; pause ;;
-      2) start_stack; pause ;;
-      3) build_restart_stack; pause ;;
-      4) restart_stack; pause ;;
-      5) stop_stack; pause ;;
-      6) show_logs ;;
-      7) backup_db; pause ;;
-      8) restore_db; pause ;;
-      9) login_creator; pause ;;
-      10) create_container; pause ;;
-      11) create_invite; pause ;;
-      12) reset_creator_password; pause ;;
-      13) wireguard_menu; pause ;;
-      14) exit 0 ;;
+      1) stack_menu ;;
+      2) access_menu ;;
+      3) workspace_menu ;;
+      4) security_menu ;;
+      5) backup_menu ;;
+      6) run_action "Status / health" show_status ;;
+      0) exit 0 ;;
       *) red "Okant val."; pause ;;
     esac
   done
