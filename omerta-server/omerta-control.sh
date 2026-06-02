@@ -299,6 +299,126 @@ create_invite() {
   echo
 }
 
+list_users() {
+  api_json GET /creator/users
+  echo
+}
+
+change_user_role() {
+  list_users
+  echo
+  read -rp "User id: " user_id
+  read -rp "Ny roll [ADMIN/SUB_ADMIN/USER]: " role
+  role="${role:-USER}"
+  local body
+  body=$(printf '{"role":"%s"}' "$role")
+  api_json PATCH "/creator/users/${user_id}/role" "$body"
+  echo
+}
+
+set_user_enabled() {
+  local action="$1"
+  list_users
+  echo
+  read -rp "User id: " user_id
+  api_json PATCH "/creator/users/${user_id}/${action}"
+  echo
+}
+
+list_devices() {
+  api_json GET /creator/devices
+  echo
+}
+
+revoke_device() {
+  list_devices
+  echo
+  read -rp "Device id: " device_id
+  api_json PATCH "/creator/devices/${device_id}/revoke"
+  echo
+}
+
+show_release_policy() {
+  api_json GET /creator/release-policy
+  echo
+}
+
+update_release_policy() {
+  show_release_policy
+  echo
+  read -rp "Current app version [lamna tom for oforandrat]: " current
+  read -rp "Minimum app version [lamna tom for oforandrat]: " minimum
+  read -rp "Meddelande till appen [lamna tom for oforandrat]: " message
+  read -rp "Update recommended? [skip/true/false] [skip]: " recommended
+  read -rp "Force update? [skip/true/false] [skip]: " force
+  read -rp "Maintenance mode? [skip/true/false] [skip]: " maintenance
+  local parts=()
+  [[ -n "$current" ]] && parts+=("\"currentAppVersion\":\"$current\"")
+  [[ -n "$minimum" ]] && parts+=("\"minimumAppVersion\":\"$minimum\"")
+  [[ -n "$message" ]] && parts+=("\"message\":\"$message\"")
+  [[ "$recommended" == "true" || "$recommended" == "false" ]] && parts+=("\"updateRecommended\":$recommended")
+  [[ "$force" == "true" || "$force" == "false" ]] && parts+=("\"forceUpdate\":$force")
+  [[ "$maintenance" == "true" || "$maintenance" == "false" ]] && parts+=("\"maintenanceMode\":$maintenance")
+  if [[ "${#parts[@]}" -eq 0 ]]; then
+    yellow "Inget att uppdatera."
+    return 0
+  fi
+  local body
+  body="{$(IFS=,; echo "${parts[*]}")}"
+  api_json PUT /creator/release-policy "$body"
+  echo
+}
+
+set_release_flag() {
+  local key="$1"
+  local value="$2"
+  local label="$3"
+  local body
+  body=$(printf '{"%s":%s}' "$key" "$value")
+  api_json PUT /creator/release-policy "$body"
+  echo
+  green "$label satt till $value."
+}
+
+execute_wipe() {
+  local wipe_type="$1"
+  yellow "Detta skapar en wipe command. App wipe rensar appdata/nycklar. Phone wipe ar mycket destruktivt om klienten stodjer det."
+  read -rp "Scope [all/container/user/device] [user]: " scope
+  scope="${scope:-user}"
+  local target=""
+  if [[ "$scope" != "all" ]]; then
+    read -rp "Target id: " target
+  fi
+  read -rp "Reason [admin-request]: " reason
+  reason="${reason:-admin-request}"
+  read -rsp "Wipe PIN: " pin
+  echo
+  local body
+  if [[ "$scope" == "all" ]]; then
+    body=$(printf '{"pin":"%s","confirmation":"WIPE","scope":"%s","wipeType":"%s","reason":"%s"}' "$pin" "$scope" "$wipe_type" "$reason")
+  else
+    body=$(printf '{"pin":"%s","confirmation":"WIPE","scope":"%s","wipeType":"%s","targetId":"%s","reason":"%s"}' "$pin" "$scope" "$wipe_type" "$target" "$reason")
+  fi
+  api_json POST /creator/wipe/execute "$body"
+  echo
+}
+
+set_wipe_pin() {
+  local pin
+  read -rsp "Ny creator wipe PIN: " pin
+  echo
+  [[ -n "$pin" ]] || { red "PIN kravs."; return 1; }
+  local body
+  body=$(printf '{"pin":"%s"}' "$pin")
+  api_json PUT /creator/wipe/pin "$body"
+  echo
+}
+
+show_billing_orders() {
+  api_json GET /creator/billing-orders
+  echo
+}
+
 install_wireguard() {
   if command -v apt-get >/dev/null 2>&1; then
     apt-get update
@@ -491,6 +611,139 @@ workspace_menu() {
   done
 }
 
+users_menu() {
+  while true; do
+    screen
+    section "Users och devices"
+    muted "Rollbyte loggar ut anvandaren sa ny behorighet laddas in."
+    option 1 "Lista users"
+    option 2 "Andra user roll"
+    option 3 "Disable user"
+    option 4 "Enable user"
+    option 5 "Lista devices"
+    option 6 "Revoke device"
+    option 0 "Tillbaka"
+    echo
+    read -rp "Val: " choice
+    case "$choice" in
+      1) run_action "Users" list_users ;;
+      2) run_action "Andra user roll" change_user_role ;;
+      3)
+        if confirm "Disable user och avsluta sessions?"; then
+          run_action "Disable user" set_user_enabled disable
+        fi
+        ;;
+      4) run_action "Enable user" set_user_enabled enable ;;
+      5) run_action "Devices" list_devices ;;
+      6)
+        if confirm "Revoke device och avsluta sessions?"; then
+          run_action "Revoke device" revoke_device
+        fi
+        ;;
+      0) return 0 ;;
+      *) red "Okant val."; pause ;;
+    esac
+  done
+}
+
+release_menu() {
+  while true; do
+    screen
+    section "Release och kill switch"
+    option 1 "Visa release policy"
+    option 2 "Uppdatera versioner/flaggor"
+    option 3 "Force update ON"
+    option 4 "Force update OFF"
+    option 5 "Kill switch ON"
+    option 6 "Kill switch OFF"
+    option 7 "Maintenance mode ON"
+    option 8 "Maintenance mode OFF"
+    option 0 "Tillbaka"
+    echo
+    read -rp "Val: " choice
+    case "$choice" in
+      1) run_action "Release policy" show_release_policy ;;
+      2) run_action "Uppdatera release policy" update_release_policy ;;
+      3)
+        if confirm "Tvinga alla klienter till update?"; then
+          run_action "Force update ON" set_release_flag forceUpdate true "Force update"
+        fi
+        ;;
+      4) run_action "Force update OFF" set_release_flag forceUpdate false "Force update" ;;
+      5)
+        if confirm "AKTIVERA kill switch? Detta blockerar appen."; then
+          run_action "Kill switch ON" set_release_flag killSwitch true "Kill switch"
+        fi
+        ;;
+      6) run_action "Kill switch OFF" set_release_flag killSwitch false "Kill switch" ;;
+      7)
+        if confirm "Satta appen i maintenance mode?"; then
+          run_action "Maintenance ON" set_release_flag maintenanceMode true "Maintenance mode"
+        fi
+        ;;
+      8) run_action "Maintenance OFF" set_release_flag maintenanceMode false "Maintenance mode" ;;
+      0) return 0 ;;
+      *) red "Okant val."; pause ;;
+    esac
+  done
+}
+
+wipe_menu() {
+  while true; do
+    screen
+    section "Wipe operations"
+    option 1 "Visa wipe status"
+    option 2 "Satt/resetta creator wipe PIN"
+    option 3 "App wipe"
+    option 4 "Phone wipe"
+    option 5 "Visa wipe commands"
+    option 0 "Tillbaka"
+    echo
+    read -rp "Val: " choice
+    case "$choice" in
+      1) run_action "Wipe status" api_json GET /creator/wipe/status ;;
+      2)
+        if confirm "Satta ny creator wipe PIN?"; then
+          run_action "Set wipe PIN" set_wipe_pin
+        fi
+        ;;
+      3)
+        if confirm "Skapa APP WIPE command?"; then
+          run_action "App wipe" execute_wipe APP_WIPE
+        fi
+        ;;
+      4)
+        if confirm "Skapa PHONE WIPE command? Detta ar destruktivt."; then
+          run_action "Phone wipe" execute_wipe PHONE_WIPE
+        fi
+        ;;
+      5) run_action "Wipe commands" api_json GET /creator/wipe/commands ;;
+      0) return 0 ;;
+      *) red "Okant val."; pause ;;
+    esac
+  done
+}
+
+billing_menu() {
+  while true; do
+    screen
+    section "Billing och provisioning"
+    option 1 "Visa senaste billing orders"
+    option 2 "Visa containers"
+    option 3 "Visa invites"
+    option 0 "Tillbaka"
+    echo
+    read -rp "Val: " choice
+    case "$choice" in
+      1) run_action "Billing orders" show_billing_orders ;;
+      2) run_action "Containers" api_json GET /creator/containers ;;
+      3) run_action "Invites" api_json GET /creator/invites ;;
+      0) return 0 ;;
+      *) red "Okant val."; pause ;;
+    esac
+  done
+}
+
 backup_menu() {
   while true; do
     screen
@@ -518,17 +771,19 @@ security_menu() {
     screen
     section "Security operations"
     option 1 "WireGuard + dashboard VPN"
-    option 2 "Visa audit-loggar"
-    option 3 "Visa release policy"
-    option 4 "Visa wipe commands"
+    option 2 "Release och kill switch"
+    option 3 "Wipe operations"
+    option 4 "Visa audit-loggar"
+    option 5 "Visa ops status"
     option 0 "Tillbaka"
     echo
     read -rp "Val: " choice
     case "$choice" in
       1) wireguard_menu ;;
-      2) run_action "Audit logs" api_json GET /creator/audit-logs ;;
-      3) run_action "Release policy" api_json GET /release/policy ;;
-      4) run_action "Wipe commands" api_json GET /creator/wipe/commands ;;
+      2) release_menu ;;
+      3) wipe_menu ;;
+      4) run_action "Audit logs" api_json GET /creator/audit-logs ;;
+      5) run_action "Ops status" api_json GET /creator/ops/status ;;
       0) return 0 ;;
       *) red "Okant val."; pause ;;
     esac
@@ -544,9 +799,12 @@ main_menu() {
     option 1 "Stack och containers"
     option 2 "Creator access"
     option 3 "Workspaces och invites"
-    option 4 "Security operations"
-    option 5 "Backup och restore"
-    option 6 "Snabbstatus / health"
+    option 4 "Users och devices"
+    option 5 "Release / kill switch / wipe"
+    option 6 "Billing och provisioning"
+    option 7 "Security operations"
+    option 8 "Backup och restore"
+    option 9 "Snabbstatus / health"
     option 0 "Avsluta"
     echo
     read -rp "Val: " choice
@@ -554,9 +812,12 @@ main_menu() {
       1) stack_menu ;;
       2) access_menu ;;
       3) workspace_menu ;;
-      4) security_menu ;;
-      5) backup_menu ;;
-      6) run_action "Status / health" show_status ;;
+      4) users_menu ;;
+      5) release_menu ;;
+      6) billing_menu ;;
+      7) security_menu ;;
+      8) backup_menu ;;
+      9) run_action "Status / health" show_status ;;
       0) exit 0 ;;
       *) red "Okant val."; pause ;;
     esac

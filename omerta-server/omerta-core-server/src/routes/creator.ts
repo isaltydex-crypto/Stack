@@ -20,11 +20,13 @@ const updateContainerSchema = z.object({
 });
 const inviteSchema = z.object({ containerId: z.string().uuid(), role: z.enum(['ADMIN','SUB_ADMIN','USER']), expiresAt: z.string().datetime().optional() });
 const idSchema = z.object({ id: z.string().uuid() });
+const roleSchema = z.object({ role: z.enum(['ADMIN','SUB_ADMIN','USER']) });
 const wipePinSetSchema = z.object({ pin: z.string().min(4).max(32).regex(/^[0-9A-Za-z!@#$%^&*()_+\-=]{4,32}$/) });
 const wipeExecuteSchema = z.object({
   pin: z.string().min(4).max(32),
   confirmation: z.literal('WIPE'),
   scope: z.enum(['all','container','user','device']).default('all'),
+  wipeType: z.enum(['APP_WIPE','PHONE_WIPE']).default('APP_WIPE'),
   targetId: z.string().uuid().optional(),
   reason: z.string().max(240).optional()
 });
@@ -265,6 +267,17 @@ export async function creatorRoutes(app: FastifyInstance) {
     return { success: true };
   });
 
+  app.patch('/creator/users/:id/role', { preHandler: requireCreator }, async (req, reply) => {
+    const { id } = idSchema.parse(req.params);
+    const body = roleSchema.parse(req.body);
+    const res = await query<any>('UPDATE users SET role=$2 WHERE id=$1 RETURNING id, nick, role', [id, body.role]);
+    if (!res.rows[0]) return reply.code(404).send({ success: false, error: 'USER_NOT_FOUND' });
+    await query('UPDATE sessions SET active=false WHERE user_id=$1', [id]);
+    await queueGroupKeyRotationsForUser(id, 'ROLE_CHANGED');
+    await audit('creator', 'creator', 'user.role.update', id, { role: body.role });
+    return { success: true, user: res.rows[0] };
+  });
+
   app.get('/creator/devices', { preHandler: requireCreator }, async () => {
     const res = await query(
       `SELECT devices.id, devices.user_id, users.nick, containers.name AS container_name,
@@ -320,9 +333,9 @@ export async function creatorRoutes(app: FastifyInstance) {
     if (!verified.ok) return reply.code(403).send({ success: false, error: verified.error, lockedUntil: 'lockedUntil' in verified ? verified.lockedUntil : null });
 
     const commandRes = await query<any>(
-      `INSERT INTO wipe_commands(scope, target_id, reason, requested_by)
-       VALUES($1,$2,$3,$4) RETURNING *`,
-      [body.scope, body.targetId ?? null, body.reason ?? null, 'creator']
+      `INSERT INTO wipe_commands(scope, target_id, reason, requested_by, wipe_type, expires_at)
+       VALUES($1,$2,$3,$4,$5,now() + interval '30 minutes') RETURNING *`,
+      [body.scope, body.targetId ?? null, body.reason ?? null, 'creator', body.wipeType]
     );
 
     if (body.scope === 'all') {
@@ -343,13 +356,24 @@ export async function creatorRoutes(app: FastifyInstance) {
       await queueGroupKeyRotationsForDevice(body.targetId!, 'WIPE_DEVICE');
     }
 
-    await audit('creator', 'creator', 'wipe.execute', body.targetId, { scope: body.scope, reason: body.reason, commandId: commandRes.rows[0].id });
+    await audit('creator', 'creator', 'wipe.execute', body.targetId, { scope: body.scope, wipeType: body.wipeType, reason: body.reason, commandId: commandRes.rows[0].id });
     return { success: true, command: commandRes.rows[0] };
   });
 
   app.get('/creator/wipe/commands', { preHandler: requireCreator }, async () => {
     const res = await query('SELECT * FROM wipe_commands ORDER BY created_at DESC LIMIT 100');
     return { success: true, commands: res.rows };
+  });
+
+  app.get('/creator/billing-orders', { preHandler: requireCreator }, async () => {
+    const res = await query(
+      `SELECT id, provider, external_order_id, plan, status, customer_email, container_id,
+              first_admin_invite_id, access_until, paid_at, provisioned_at, created_at, updated_at
+       FROM billing_orders
+       ORDER BY created_at DESC
+       LIMIT 100`
+    );
+    return { success: true, orders: res.rows };
   });
 
 
