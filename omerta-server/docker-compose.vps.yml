@@ -82,6 +82,7 @@
     volumes:
       - ./docker/nginx/omerta-vps-http.conf:/etc/nginx/conf.d/default.conf:ro
       - ./certs:/etc/nginx/certs:ro
+      - ./releases:/usr/share/nginx/html/releases:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/health >/dev/null || exit 1"]
       interval: 20s

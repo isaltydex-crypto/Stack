@@ -151,6 +151,15 @@ random_secret() {
   fi
 }
 
+json_escape() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/ }"
+  value="${value//$'\r'/ }"
+  printf '%s' "$value"
+}
+
 login_creator() {
   need_cmd curl || return 1
   local email password
@@ -378,6 +387,48 @@ set_release_flag() {
   api_json PUT /creator/release-policy "$body"
   echo
   green "$label satt till $value."
+}
+
+publish_app_update() {
+  require_env || return 1
+  local apk_path version minimum message recommended force public_api releases_dir file_name update_url body
+  read -rp "Sokvag till APK pa VPS: " apk_path
+  [[ -f "$apk_path" ]] || { red "APK-filen finns inte."; return 1; }
+  read -rp "Ny app version: " version
+  [[ -n "$version" ]] || { red "Version kravs."; return 1; }
+  read -rp "Minimum app version [$version]: " minimum
+  minimum="${minimum:-$version}"
+  read -rp "Release message [Ny OMERTA-version finns]: " message
+  message="${message:-Ny OMERTA-version finns}"
+  read -rp "Rekommendera update? [Y/n]: " recommended
+  recommended="${recommended:-Y}"
+  read -rp "Tvinga update? [y/N]: " force
+  public_api="$(env_value PUBLIC_API_URL)"
+  public_api="${public_api%/}"
+  releases_dir="$ROOT_DIR/releases"
+  mkdir -p "$releases_dir"
+  file_name="omerta-${version}.apk"
+  cp "$apk_path" "$releases_dir/$file_name"
+  cp "$apk_path" "$releases_dir/omerta-latest.apk"
+  chmod 644 "$releases_dir/$file_name" "$releases_dir/omerta-latest.apk" 2>/dev/null || true
+  update_url="${public_api}/releases/omerta-latest.apk"
+  local recommended_bool=false force_bool=false
+  [[ "$recommended" =~ ^[Yy]$ ]] && recommended_bool=true
+  [[ "$force" =~ ^[Yy]$ ]] && force_bool=true
+  body=$(printf '{"currentAppVersion":"%s","minimumAppVersion":"%s","updateRecommended":%s,"forceUpdate":%s,"message":"%s","remoteConfig":{"updateUrl":"%s","releaseApk":"%s","releaseNotes":"%s"}}' \
+    "$(json_escape "$version")" \
+    "$(json_escape "$minimum")" \
+    "$recommended_bool" \
+    "$force_bool" \
+    "$(json_escape "$message")" \
+    "$(json_escape "$update_url")" \
+    "$(json_escape "$file_name")" \
+    "$(json_escape "$message")")
+  api_json PUT /creator/release-policy "$body"
+  echo
+  green "APK publicerad: $update_url"
+  yellow "Startar om nginx sa release-volymen ar monterad."
+  compose up -d --force-recreate nginx
 }
 
 execute_wipe() {
@@ -651,37 +702,39 @@ release_menu() {
     screen
     section "Release och kill switch"
     option 1 "Visa release policy"
-    option 2 "Uppdatera versioner/flaggor"
-    option 3 "Force update ON"
-    option 4 "Force update OFF"
-    option 5 "Kill switch ON"
-    option 6 "Kill switch OFF"
-    option 7 "Maintenance mode ON"
-    option 8 "Maintenance mode OFF"
+    option 2 "Publicera OMERTA APK update"
+    option 3 "Uppdatera versioner/flaggor"
+    option 4 "Force update ON"
+    option 5 "Force update OFF"
+    option 6 "Kill switch ON"
+    option 7 "Kill switch OFF"
+    option 8 "Maintenance mode ON"
+    option 9 "Maintenance mode OFF"
     option 0 "Tillbaka"
     echo
     read -rp "Val: " choice
     case "$choice" in
       1) run_action "Release policy" show_release_policy ;;
-      2) run_action "Uppdatera release policy" update_release_policy ;;
-      3)
+      2) run_action "Publicera OMERTA APK update" publish_app_update ;;
+      3) run_action "Uppdatera release policy" update_release_policy ;;
+      4)
         if confirm "Tvinga alla klienter till update?"; then
           run_action "Force update ON" set_release_flag forceUpdate true "Force update"
         fi
         ;;
-      4) run_action "Force update OFF" set_release_flag forceUpdate false "Force update" ;;
-      5)
+      5) run_action "Force update OFF" set_release_flag forceUpdate false "Force update" ;;
+      6)
         if confirm "AKTIVERA kill switch? Detta blockerar appen."; then
           run_action "Kill switch ON" set_release_flag killSwitch true "Kill switch"
         fi
         ;;
-      6) run_action "Kill switch OFF" set_release_flag killSwitch false "Kill switch" ;;
-      7)
+      7) run_action "Kill switch OFF" set_release_flag killSwitch false "Kill switch" ;;
+      8)
         if confirm "Satta appen i maintenance mode?"; then
           run_action "Maintenance ON" set_release_flag maintenanceMode true "Maintenance mode"
         fi
         ;;
-      8) run_action "Maintenance OFF" set_release_flag maintenanceMode false "Maintenance mode" ;;
+      9) run_action "Maintenance OFF" set_release_flag maintenanceMode false "Maintenance mode" ;;
       0) return 0 ;;
       *) red "Okant val."; pause ;;
     esac
